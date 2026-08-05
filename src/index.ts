@@ -6,7 +6,6 @@ import { ElfaApiError } from '@elfa-ai/sdk';
 import healthRouter from './routes/health';
 import marketRouter from './routes/market';
 import authRouter from './routes/auth';
-import agentRouter from './routes/agent';
 
 // Validate required env vars at startup
 const REQUIRED_ENV = [
@@ -38,7 +37,6 @@ app.use(express.json());
 app.use('/api/health', healthRouter);
 app.use('/api/market', marketRouter);
 app.use('/api/auth', authRouter);
-app.use('/api/agent', agentRouter);
 
 // Global error handler
 app.use(

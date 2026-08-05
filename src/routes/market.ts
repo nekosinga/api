@@ -1,16 +1,18 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { elfa } from '../lib/elfa';
-import { cached } from '../lib/redis';
+import { cached, redis } from '../lib/redis';
 
 const router = Router();
 
+// TTLs per §6 (updated: longer TTLs to conserve Elfa credits)
 const TTL = {
-  trending: 5 * 60,     // 5 minutes
-  sentiment: 3 * 60,    // 3 minutes
-  news: 5 * 60,         // 5 minutes
-  trendingCAs: 5 * 60,  // 5 minutes
-  smartStats: 10 * 60,  // 10 minutes
+  trending: 30 * 60,    // 30 minutes (1800s)
+  sentiment: 15 * 60,   // 15 minutes (900s)
+  news: 30 * 60,        // 30 minutes (1800s)
+  trendingCAs: 30 * 60, // 30 minutes (1800s)
+  smartStats: 60 * 60,  // 1 hour (3600s)
+  icon: 24 * 60 * 60,   // 24 hours (86400s)
 };
 
 // GET /api/market/trending
@@ -24,11 +26,11 @@ router.get('/trending', async (req, res, next) => {
     const params = schema.parse(req.query);
     const cacheKey = `market:trending:${params.timeWindow}:${params.pageSize}`;
 
-    const data = await cached(cacheKey, TTL.trending, () =>
+    const payload = await cached(cacheKey, TTL.trending, () =>
       elfa.getTrendingTokens({ timeWindow: params.timeWindow, pageSize: params.pageSize })
     );
 
-    res.json({ data });
+    res.json({ data: { success: true, data: payload } });
   } catch (err) {
     next(err);
   }
@@ -46,7 +48,7 @@ router.get('/sentiment/:token', async (req, res, next) => {
     const params = schema.parse(req.query);
     const cacheKey = `market:sentiment:${token}:${params.timeWindow}`;
 
-    const data = await cached(cacheKey, TTL.sentiment, () =>
+    const payload = await cached(cacheKey, TTL.sentiment, () =>
       elfa.getKeywordMentions({
         keywords: token,
         timeWindow: params.timeWindow,
@@ -54,7 +56,7 @@ router.get('/sentiment/:token', async (req, res, next) => {
       })
     );
 
-    res.json({ data });
+    res.json({ data: { success: true, data: payload } });
   } catch (err) {
     next(err);
   }
@@ -74,7 +76,7 @@ router.get('/news', async (req, res, next) => {
     const params = schema.parse(req.query);
     const cacheKey = `market:news:${params.coinIds ?? 'all'}:${params.timeWindow ?? 'default'}:${params.page}:${params.pageSize}`;
 
-    const data = await cached(cacheKey, TTL.news, () =>
+    const payload = await cached(cacheKey, TTL.news, () =>
       elfa.getTokenNews({
         coinIds: params.coinIds,
         timeWindow: params.timeWindow,
@@ -83,7 +85,7 @@ router.get('/news', async (req, res, next) => {
       })
     );
 
-    res.json({ data });
+    res.json({ data: { success: true, data: payload } });
   } catch (err) {
     next(err);
   }
@@ -103,7 +105,7 @@ router.get('/trending-cas', async (req, res, next) => {
     const params = schema.parse(req.query);
     const cacheKey = `market:trending-cas:${params.timeWindow}:${params.page}:${params.pageSize}:${params.minMentions ?? 0}`;
 
-    const data = await cached(cacheKey, TTL.trendingCAs, () =>
+    const payload = await cached(cacheKey, TTL.trendingCAs, () =>
       elfa.getTrendingCAsTwitter({
         timeWindow: params.timeWindow,
         pageSize: params.pageSize,
@@ -112,7 +114,7 @@ router.get('/trending-cas', async (req, res, next) => {
       })
     );
 
-    res.json({ data });
+    res.json({ data: { success: true, data: payload } });
   } catch (err) {
     next(err);
   }
@@ -125,11 +127,61 @@ router.get('/stats/:username', async (req, res, next) => {
     const { username } = req.params;
     const cacheKey = `market:stats:${username}`;
 
-    const data = await cached(cacheKey, TTL.smartStats, () =>
+    const payload = await cached(cacheKey, TTL.smartStats, () =>
       elfa.getAccountSmartStats({ username })
     );
 
-    res.json({ data });
+    res.json({ data: { success: true, data: payload } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/market/icon/:symbol
+// Resolves token icon URL via CoinGecko search. Returns null if not found.
+// Cache: 24h (§6b — required, not optional; CoinGecko rate limit ~10–30 req/min)
+router.get('/icon/:symbol', async (req, res, next) => {
+  try {
+    const { symbol } = req.params;
+    const cacheKey = `market:icon:${symbol.toLowerCase()}`;
+
+    // Check cache first (manual — CoinGecko is not an Elfa call, no stale needed)
+    const cached_icon = await redis.get<string | null>(cacheKey);
+    if (cached_icon !== undefined) {
+      res.json({ data: { success: true, data: cached_icon } });
+      return;
+    }
+
+    let iconUrl: string | null = null;
+
+    try {
+      // CoinGecko public search — no API key required for this endpoint
+      const searchRes = await fetch(
+        `https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(symbol)}`
+      );
+
+      if (searchRes.ok) {
+        const body = (await searchRes.json()) as {
+          coins?: Array<{ symbol: string; thumb: string }>;
+        };
+
+        // Find exact symbol match (case-insensitive), fall back to first result
+        const match =
+          body.coins?.find(
+            (c) => c.symbol.toLowerCase() === symbol.toLowerCase()
+          ) ?? body.coins?.[0];
+
+        iconUrl = match?.thumb ?? null;
+      }
+    } catch {
+      // CoinGecko unreachable — return null gracefully, frontend falls back to initial badge
+      iconUrl = null;
+    }
+
+    // Cache the result (even null — prevents hammering CoinGecko for unknown tokens)
+    await redis.set(cacheKey, iconUrl, { ex: TTL.icon });
+
+    res.json({ data: { success: true, data: iconUrl } });
   } catch (err) {
     next(err);
   }
