@@ -140,15 +140,23 @@ router.get('/stats/:username', async (req, res, next) => {
 // GET /api/market/icon/:symbol
 // Resolves token icon URL via CoinGecko search. Returns null if not found.
 // Cache: 24h (§6b — required, not optional; CoinGecko rate limit ~10–30 req/min)
+//
+// Cache sentinel: we store "NULL" (string) for missing icons to distinguish
+// a cached "not found" result from a genuine Redis cache miss (which returns null).
+const ICON_NOT_FOUND_SENTINEL = 'NULL';
+
 router.get('/icon/:symbol', async (req, res, next) => {
   try {
     const { symbol } = req.params;
     const cacheKey = `market:icon:${symbol.toLowerCase()}`;
 
     // Check cache first (manual — CoinGecko is not an Elfa call, no stale needed)
-    const cached_icon = await redis.get<string | null>(cacheKey);
-    if (cached_icon !== undefined) {
-      res.json({ data: { success: true, data: cached_icon } });
+    // redis.get() returns null on cache miss AND when cached value is null,
+    // so we use a sentinel string to distinguish the two cases.
+    const cachedValue = await redis.get<string>(cacheKey);
+    if (cachedValue !== null) {
+      const iconUrl = cachedValue === ICON_NOT_FOUND_SENTINEL ? null : cachedValue;
+      res.json({ data: { success: true, data: iconUrl } });
       return;
     }
 
@@ -179,7 +187,7 @@ router.get('/icon/:symbol', async (req, res, next) => {
     }
 
     // Cache the result (even null — prevents hammering CoinGecko for unknown tokens)
-    await redis.set(cacheKey, iconUrl, { ex: TTL.icon });
+    await redis.set(cacheKey, iconUrl ?? ICON_NOT_FOUND_SENTINEL, { ex: TTL.icon });
 
     res.json({ data: { success: true, data: iconUrl } });
   } catch (err) {
