@@ -38,7 +38,8 @@ const corsOptions: cors.CorsOptions = {
 };
 
 // Handle OPTIONS preflight for all routes before any route definitions
-app.options('*', cors(corsOptions));
+// Express v5 requires explicit wildcard syntax (not '*')
+app.options('/{*path}', cors(corsOptions));
 app.use(cors(corsOptions));
 app.use(express.json());
 
