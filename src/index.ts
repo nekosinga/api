@@ -25,12 +25,19 @@ for (const key of REQUIRED_ENV) {
 
 const app = express();
 
-app.use(
-  cors({
-    origin: process.env.FRONTEND_URL ?? '*',
-    credentials: true,
-  })
-);
+const corsOptions: cors.CorsOptions = {
+  origin: [
+    process.env.FRONTEND_URL,
+    'https://app-nekosinga.vercel.app',
+  ].filter(Boolean) as string[],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
+
+// Handle OPTIONS preflight for all routes before any route definitions
+app.options('*', cors(corsOptions));
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // Routes
