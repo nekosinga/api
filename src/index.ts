@@ -29,6 +29,8 @@ const corsOptions: cors.CorsOptions = {
   origin: [
     process.env.FRONTEND_URL,
     'https://app-nekosinga.vercel.app',
+    'http://localhost:3001',
+    'http://localhost:3000',
   ].filter(Boolean) as string[],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
